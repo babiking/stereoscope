@@ -41,14 +41,3 @@ def match_keypoints_2d(src_img, dst_img, threshold=0.75, draw=False):
         plt.imshow(cat_img[:, :, ::-1])
         plt.show()
     return src_kp, src_desc, dst_kp, dst_desc, good
-
-
-def main():
-    src_rgb = cv.imread('data/bandsaw1/im0.png', flags=cv.IMREAD_COLOR)
-    dst_rgb = cv.imread('data/bandsaw1/im1.png', flags=cv.IMREAD_COLOR)
-
-    match_keypoints_2d(src_rgb, dst_rgb, 0.75, True)
-
-
-if __name__ == '__main__':
-    main()
