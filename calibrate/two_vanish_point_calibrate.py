@@ -96,6 +96,32 @@ def capture_with_camera(w_pnts, cam_rot_quat, cam_t_vec, cam_mat):
     return c_pixs
 
 
+def fit_linear_scatter_points(xs, ys):
+    n = len(xs)
+    x_sum = np.sum(xs)
+    x2_sum = np.sum(np.power(xs, 2))
+    y_sum = np.sum(ys)
+    xy_sum = np.sum(xs * ys)
+
+    k = (y_sum * x_sum - n * xy_sum) / (x_sum**2 - n * x2_sum)
+    b = (y_sum - k * x_sum) / n
+    return k, b
+
+
+def intersect_linear_lines(k_0, b_0, k_1, b_1):
+    # line equation: kx + b - y = 0
+    # y = k_0 x + b_0
+    # y = k_1 x + b_1
+
+    # (k_0 - k_1) x + (b_0 - b_1) = 0
+    if abs(k_0 - k_1) < 1e-3:
+        return
+
+    x = -(b_0 - b_1) / (k_0 - k_1)
+    y = k_0 * x + b_0
+    return np.array([x, y], dtype=np.float32)
+
+
 def main():
     work_path = os.path.dirname(__file__)
 
@@ -109,12 +135,12 @@ def main():
     # 4. project chessboard points (world) onto camera image plane
     n_cams = 21
     cam_rot_quat_0, cam_t_vec_0 = setup_camera_extrinsics(
-        cam_t_vec=np.array([16.0, 12.0, 20.0], dtype=np.float32),
-        cam_polar=np.pi / 4,
+        cam_t_vec=np.array([18.0, 8.0, 40.0], dtype=np.float32),
+        cam_polar=np.pi / 5,
         cam_azimuth=np.arctan2(4, 3))
     cam_rot_quat_1, cam_t_vec_1 = setup_camera_extrinsics(
-        cam_t_vec=np.array([-16.0, -12.0, 20.0], dtype=np.float32),
-        cam_polar=np.pi / 4,
+        cam_t_vec=np.array([-15.0, -12.0, 40.0], dtype=np.float32),
+        cam_polar=np.pi / 6,
         cam_azimuth=np.arctan2(-4, -3))
 
     for i in tqdm(range(n_cams),
@@ -134,11 +160,21 @@ def main():
             cam_mat,
         )
 
-        fig = plt.figure()
-        plt.scatter(cb_pixs[:, :, 0].flatten(), cb_pixs[:, :, 1].flatten())
-        plt.xlim(0.0, 720.0)
-        plt.ylim(0.0, 1080.0)
-        plt.show()
+        # 5. linear fit chessboard 4 edges and find out 2 valid vanish points
+        u_k_0, u_b_0 = fit_linear_scatter_points(cb_pixs[:, 0, 0],
+                                                 cb_pixs[:, 0, 1])
+        u_k_1, u_b_1 = fit_linear_scatter_points(cb_pixs[:, -1, 0],
+                                                 cb_pixs[:, -1, 1])
+        u_vp = intersect_linear_lines(u_k_0, u_b_0, u_k_1, u_b_1)
+
+        v_k_0, v_b_0 = fit_linear_scatter_points(cb_pixs[0, :, 0],
+                                                 cb_pixs[0, :, 1])
+        v_k_1, v_b_1 = fit_linear_scatter_points(cb_pixs[-1, :, 0],
+                                                 cb_pixs[-1, :, 1])
+        v_vp = intersect_linear_lines(v_k_0, v_b_0, v_k_1, v_b_1)
+
+        if u_vp is None or v_vp is None:
+            continue
 
 
 if __name__ == '__main__':
