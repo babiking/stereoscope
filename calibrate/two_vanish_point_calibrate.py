@@ -279,6 +279,7 @@ def main():
             cam_t_vec,
             cam_mat,
         )
+        cb_pixs += np.random.randn(*cb_pixs.shape) * 0.3
 
         # 5. linear fit chessboard 4 edges and find out 2 valid vanish points
         u_vp, u_vp_sign, u_k_0, u_b_0, u_k_1, u_b_1 = get_vanish_point(
@@ -312,16 +313,16 @@ def main():
             cam_dim_h, cam_dim_w)
 
         f_err = abs(calib_f - f)
-        assert f_err < 1e-3, 'focal length calibration error!'
+        # assert f_err < 1e-3, 'focal length calibration error!'
 
         rot_quat_err = (cam_rot_quat.inverse * calib_rot_quat).rotation_matrix
-        assert np.allclose(rot_quat_err,
-                           np.eye(3, dtype=np.float32),
-                           rtol=1e-5,
-                           atol=1e-5), 'rotation matrix calibration error!'
+        # assert np.allclose(rot_quat_err,
+        #                    np.eye(3, dtype=np.float32),
+        #                    rtol=1e-5,
+        #                    atol=1e-5), 'rotation matrix calibration error!'
 
         t_vec_err = np.linalg.norm(cam_t_vec - calib_t_vec)
-        assert t_vec_err < 1e-4, 'translation vector calibration error!'
+        # assert t_vec_err < 1e-4, 'translation vector calibration error!'
 
         draw = True
         if draw:
