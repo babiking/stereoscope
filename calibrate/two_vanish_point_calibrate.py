@@ -108,7 +108,7 @@ def fit_linear_scatter_points(xs, ys):
     return k, b
 
 
-def intersect_linear_lines(k_0, b_0, k_1, b_1):
+def intersect_two_lines_2d(k_0, b_0, k_1, b_1):
     # line equation: kx + b - y = 0
     # y = k_0 x + b_0
     # y = k_1 x + b_1
@@ -122,14 +122,119 @@ def intersect_linear_lines(k_0, b_0, k_1, b_1):
     return np.array([x, y], dtype=np.float32)
 
 
+def get_line_by_points(p_0, p_1):
+    x_0, y_0 = p_0
+    x_1, y_1 = p_1
+
+    k = (y_1 - y_0) / (x_1 - x_0)
+    b = y_0 - k * x_0
+    # kx - y + b = 0
+    return (k, -1, b)
+
+
+def get_perpendicular_foot(a, b, c, p):
+    # ax + by + c = 0
+    m, n = p
+
+    x = (b * b * m - a * b * n - a * c) / (a * a + b * b)
+    y = (a * a * n - a * b * m - b * c) / (a * a + b * b)
+    return np.array([x, y], dtype=np.float32)
+
+
+def intersect_two_rays_3d(o_0, dir_0, o_1, dir_1):
+    w_0 = (o_0 - o_1)
+
+    a = np.dot(dir_0, dir_0)
+    b = np.dot(dir_0, dir_1)
+    c = np.dot(dir_1, dir_1)
+    d = np.dot(dir_0, w_0)
+    e = np.dot(dir_1, w_0)
+
+    s_0 = (b * e - c * d) / (a * c - b**2 + 1e-12)
+    s_1 = (a * e - b * d) / (a * c - b**2 + 1e-12)
+
+    p_0 = o_0 + s_0 * dir_0
+    p_1 = o_1 + s_1 * dir_1
+
+    dist = np.linalg.norm(p_0 - p_1)
+    return p_0, p_1, dist
+
+
+def calibrate_by_two_vanish_points(
+    vp_0,
+    vp_1,
+    w_obj,
+    w_pix,
+    s_obj,
+    s_pix,
+    dim_u,
+    dim_v,
+):
+    cp = np.array([dim_u / 2.0, dim_v / 2.0], dtype=np.float32)
+
+    # 1. calculate distance between camera origin and image plane
+    vp_i = get_perpendicular_foot(*get_line_by_points(vp_0, vp_1), cp)
+
+    cp_to_vp_i = np.linalg.norm(vp_i - cp)
+    vp_0_to_i = np.linalg.norm(vp_i - vp_0)
+    vp_1_to_i = np.linalg.norm(vp_i - vp_1)
+
+    f = np.sqrt(vp_0_to_i * vp_1_to_i - cp_to_vp_i**2)
+
+    # 2. reproject vanish points from image plane to camera coordinate
+    # u = au * fx * x + cx
+    # v = av * fx * y + cy
+    # BUG: x & y-axis direction inverse [nx, ny, nz] -> [-nx, -ny, nz]
+    vp_y = np.concatenate([vp_0 - cp, [f]], dtype=np.float32)
+    vp_y /= -np.linalg.norm(vp_y)
+    vp_x = np.concatenate([vp_1 - cp, [f]], dtype=np.float32)
+    vp_x /= -np.linalg.norm(vp_x)
+    vp_z = np.cross(vp_x, vp_y)
+    cam_rot_mat = R.from_matrix(np.vstack([vp_x, vp_y, vp_z]).T)
+    cam_rot_quat = Quaternion(matrix=cam_rot_mat.as_matrix())
+
+    # 3. use 2 known object points to estimate the scale
+    cam_w_s_dist = np.linalg.norm(s_obj - w_obj)
+    cam_w_s_dir = cam_rot_quat.rotate(s_obj - w_obj)
+    cam_w_s_dir /= np.linalg.norm(cam_w_s_dir)
+    cam_w_pnt = np.concatenate([w_pix - cp, [f]], dtype=np.float32)
+    cam_s_pnt = np.concatenate([s_pix - cp, [f]], dtype=np.float32)
+    cam_s_dir = cam_s_pnt / np.linalg.norm(cam_s_pnt)
+
+    # a ray starting from cam_w_pnt, along the direction of cam_w_s_dir
+    # another ray starting from camera origin, along the direction of cam_s_dir
+    # find out least-square-error intersection point of 2 rays
+    cam_q_pnt, _, ray_dist = intersect_two_rays_3d(
+        cam_w_pnt,
+        cam_w_s_dir,
+        [0.0, 0.0, 0.0],
+        cam_s_dir,
+    )
+
+    cam_w_dist = np.linalg.norm(cam_w_pnt) * cam_w_s_dist / np.linalg.norm(
+        cam_q_pnt - cam_w_pnt)
+    cam_t_vec = cam_w_dist * cam_w_pnt / (np.linalg.norm(cam_w_pnt) + 1e-12)
+    return f, cam_rot_quat, cam_t_vec
+
+
 def main():
     work_path = os.path.dirname(__file__)
 
     # 1. setup chessboard object, i.e. surface point coordinates
-    cb_pnts = get_chessboard_points_3d()
+    cb_dim_h = 13
+    cb_dim_w = 17
+    cb_sp_h = 1.0
+    cb_sp_w = 1.0
+    cb_pnts = get_chessboard_points_3d(cb_dim_h, cb_dim_w, cb_sp_h, cb_sp_w)
 
     # 2. setup camera intrinsic parameters
-    cam_mat = setup_camera_intrinsics()
+    au = 1.0  # unit: pixel / m
+    av = 1.0
+    f = 312.0
+    shear = 0.0
+    cam_dim_w = 1080
+    cam_dim_h = 720
+    cam_mat = setup_camera_intrinsics(au, av, f, shear, cam_dim_w, cam_dim_h)
 
     # 3. setup interpolated camera extrinsic parameters
     # 4. project chessboard points (world) onto camera image plane
@@ -165,16 +270,36 @@ def main():
                                                  cb_pixs[:, 0, 1])
         u_k_1, u_b_1 = fit_linear_scatter_points(cb_pixs[:, -1, 0],
                                                  cb_pixs[:, -1, 1])
-        u_vp = intersect_linear_lines(u_k_0, u_b_0, u_k_1, u_b_1)
+        u_vp = intersect_two_lines_2d(u_k_0, u_b_0, u_k_1, u_b_1)
 
         v_k_0, v_b_0 = fit_linear_scatter_points(cb_pixs[0, :, 0],
                                                  cb_pixs[0, :, 1])
         v_k_1, v_b_1 = fit_linear_scatter_points(cb_pixs[-1, :, 0],
                                                  cb_pixs[-1, :, 1])
-        v_vp = intersect_linear_lines(v_k_0, v_b_0, v_k_1, v_b_1)
+        v_vp = intersect_two_lines_2d(v_k_0, v_b_0, v_k_1, v_b_1)
 
         if u_vp is None or v_vp is None:
             continue
+
+        # 6. get 2 object points:
+        #   a. world coordinate system center
+        #   b. randomly selected object point
+        w_obj = [0.0, 0.0, 0.0]
+        w_pix = cb_pixs[(cb_dim_h - 1) // 2, (cb_dim_w - 1) // 2, :]
+        i = 0
+        j = 0
+        while (i == 0 and j == 0):
+            i = np.random.randint(low=0, high=cb_dim_h)
+            j = np.random.randint(low=0, high=cb_dim_w)
+        s_obj = cb_pnts[i, j, :]
+        s_pix = cb_pixs[i, j, :]
+
+        calib_f, calib_rot_quat, calib_t_vec = calibrate_by_two_vanish_points(
+            u_vp, v_vp, w_obj, w_pix, s_obj, s_pix, cam_dim_h, cam_dim_w)
+
+        f_err = abs(calib_f - f)
+        rot_quat_err = (cam_rot_quat.inverse * calib_rot_quat).rotation_matrix
+        t_vec_err = np.linalg.norm(cam_t_vec - calib_t_vec)
 
 
 if __name__ == '__main__':
