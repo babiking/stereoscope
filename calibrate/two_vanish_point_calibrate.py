@@ -168,7 +168,7 @@ def get_vanish_point(p_0, p_1, dim_u, dim_v):
 
     sign = 1.0
     if vp is not None:
-        ray_c = vp -  cp
+        ray_c = vp - cp
         ray_c /= np.linalg.norm(ray_c)
         ray_p = p_0[-1, :] - p_0[0, :]
         ray_p /= np.linalg.norm(ray_p)
@@ -286,10 +286,11 @@ def main():
             p_1=cb_pixs[:, -1, :],
             dim_u=cam_dim_h,
             dim_v=cam_dim_w)
-        v_vp, v_vp_sign, v_k_0, v_b_0, v_k_1, v_b_1 = get_vanish_point(p_0=cb_pixs[0, :, :],
-                                           p_1=cb_pixs[-1, :, :],
-                                           dim_u=cam_dim_h,
-                                           dim_v=cam_dim_w)
+        v_vp, v_vp_sign, v_k_0, v_b_0, v_k_1, v_b_1 = get_vanish_point(
+            p_0=cb_pixs[0, :, :],
+            p_1=cb_pixs[-1, :, :],
+            dim_u=cam_dim_h,
+            dim_v=cam_dim_w)
         if u_vp is None or v_vp is None:
             continue
 
@@ -337,6 +338,12 @@ def main():
             plt.xlim(0, cam_dim_h)
             plt.ylim(0, cam_dim_w)
             plt.legend(loc='best')
+            roundn = lambda array, n: [round(float(x), n) for x in array]
+            plt.title(
+                f'focal length: {f} VS {calib_f:.4f}' + '\n' \
+                    + f'rotation: {roundn(cam_rot_quat.elements, 2)} VS {roundn(calib_rot_quat, 2)}' + '\n' \
+                        +f'translation: {roundn(cam_t_vec, 3)} VS {roundn(calib_t_vec, 3)}.'
+            )
             plt.show()
 
 
