@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -160,9 +159,28 @@ def intersect_two_rays_3d(o_0, dir_0, o_1, dir_1):
     return p_0, p_1, dist
 
 
+def get_vanish_point(p_0, p_1, dim_u, dim_v):
+    cp = np.array([dim_u / 2, dim_v / 2], dtype=np.float32)
+
+    k_0, b_0 = fit_linear_scatter_points(p_0[:, 0], p_0[:, 1])
+    k_1, b_1 = fit_linear_scatter_points(p_1[:, 0], p_1[:, 1])
+    vp = intersect_two_lines_2d(k_0, b_0, k_1, b_1)
+
+    sign = 1.0
+    if vp is not None:
+        ray_c = vp -  cp
+        ray_c /= np.linalg.norm(ray_c)
+        ray_p = p_0[-1, :] - p_0[0, :]
+        ray_p /= np.linalg.norm(ray_p)
+        sign = 1.0 if np.dot(ray_c, ray_p) >= 0.0 else -1.0
+    return vp, sign, k_0, b_0, k_1, b_1
+
+
 def calibrate_by_two_vanish_points(
     vp_0,
+    vp_sign_0,
     vp_1,
+    vp_sign_1,
     w_obj,
     w_pix,
     s_obj,
@@ -184,11 +202,10 @@ def calibrate_by_two_vanish_points(
     # 2. reproject vanish points from image plane to camera coordinate
     # u = au * fx * x + cx
     # v = av * fx * y + cy
-    # BUG: x & y-axis direction inverse [nx, ny, nz] -> [-nx, -ny, nz]
     vp_y = np.concatenate([vp_0 - cp, [f]], dtype=np.float32)
-    vp_y /= -np.linalg.norm(vp_y)
+    vp_y /= vp_sign_0 * np.linalg.norm(vp_y)
     vp_x = np.concatenate([vp_1 - cp, [f]], dtype=np.float32)
-    vp_x /= -np.linalg.norm(vp_x)
+    vp_x /= vp_sign_1 * np.linalg.norm(vp_x)
     vp_z = np.cross(vp_x, vp_y)
     cam_rot_mat = R.from_matrix(np.vstack([vp_x, vp_y, vp_z]).T)
     cam_rot_quat = Quaternion(matrix=cam_rot_mat.as_matrix())
@@ -218,8 +235,6 @@ def calibrate_by_two_vanish_points(
 
 
 def main():
-    work_path = os.path.dirname(__file__)
-
     # 1. setup chessboard object, i.e. surface point coordinates
     cb_dim_h = 13
     cb_dim_w = 17
@@ -266,18 +281,15 @@ def main():
         )
 
         # 5. linear fit chessboard 4 edges and find out 2 valid vanish points
-        u_k_0, u_b_0 = fit_linear_scatter_points(cb_pixs[:, 0, 0],
-                                                 cb_pixs[:, 0, 1])
-        u_k_1, u_b_1 = fit_linear_scatter_points(cb_pixs[:, -1, 0],
-                                                 cb_pixs[:, -1, 1])
-        u_vp = intersect_two_lines_2d(u_k_0, u_b_0, u_k_1, u_b_1)
-
-        v_k_0, v_b_0 = fit_linear_scatter_points(cb_pixs[0, :, 0],
-                                                 cb_pixs[0, :, 1])
-        v_k_1, v_b_1 = fit_linear_scatter_points(cb_pixs[-1, :, 0],
-                                                 cb_pixs[-1, :, 1])
-        v_vp = intersect_two_lines_2d(v_k_0, v_b_0, v_k_1, v_b_1)
-
+        u_vp, u_vp_sign, u_k_0, u_b_0, u_k_1, u_b_1 = get_vanish_point(
+            p_0=cb_pixs[:, 0, :],
+            p_1=cb_pixs[:, -1, :],
+            dim_u=cam_dim_h,
+            dim_v=cam_dim_w)
+        v_vp, v_vp_sign, v_k_0, v_b_0, v_k_1, v_b_1 = get_vanish_point(p_0=cb_pixs[0, :, :],
+                                           p_1=cb_pixs[-1, :, :],
+                                           dim_u=cam_dim_h,
+                                           dim_v=cam_dim_w)
         if u_vp is None or v_vp is None:
             continue
 
@@ -295,11 +307,37 @@ def main():
         s_pix = cb_pixs[i, j, :]
 
         calib_f, calib_rot_quat, calib_t_vec = calibrate_by_two_vanish_points(
-            u_vp, v_vp, w_obj, w_pix, s_obj, s_pix, cam_dim_h, cam_dim_w)
+            u_vp, u_vp_sign, v_vp, v_vp_sign, w_obj, w_pix, s_obj, s_pix,
+            cam_dim_h, cam_dim_w)
 
         f_err = abs(calib_f - f)
+        assert f_err < 1e-3, 'focal length calibration error!'
+
         rot_quat_err = (cam_rot_quat.inverse * calib_rot_quat).rotation_matrix
+        assert np.allclose(rot_quat_err,
+                           np.eye(3, dtype=np.float32),
+                           rtol=1e-5,
+                           atol=1e-5), 'rotation matrix calibration error!'
+
         t_vec_err = np.linalg.norm(cam_t_vec - calib_t_vec)
+        assert t_vec_err < 1e-4, 'translation vector calibration error!'
+
+        draw = True
+        if draw:
+            plt.figure()
+            plt.scatter(cb_pixs[:, :, 0].flatten(),
+                        cb_pixs[:, :, 1].flatten(),
+                        color='blue',
+                        marker='*')
+            xs = np.arange(0.0, cam_dim_h, step=0.05)
+            plt.plot(xs, u_k_0 * xs + u_b_0, color='red', label='u-axis:0')
+            plt.plot(xs, u_k_1 * xs + u_b_1, color='black', label='u-axis:1')
+            plt.plot(xs, v_k_0 * xs + v_b_0, color='green', label='v-axis:0')
+            plt.plot(xs, v_k_1 * xs + v_b_1, color='yellow', label='v-axis:1')
+            plt.xlim(0, cam_dim_h)
+            plt.ylim(0, cam_dim_w)
+            plt.legend(loc='best')
+            plt.show()
 
 
 if __name__ == '__main__':
