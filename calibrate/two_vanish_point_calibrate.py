@@ -343,7 +343,7 @@ def main():
             plt.title(
                 f'focal length: {f} VS {calib_f:.4f}' + '\n' \
                     + f'rotation: {roundn(cam_rot_quat.elements, 2)} VS {roundn(calib_rot_quat, 2)}' + '\n' \
-                        +f'translation: {roundn(cam_t_vec, 3)} VS {roundn(calib_t_vec, 3)}.'
+                        + f'translation: {roundn(cam_t_vec, 3)} VS {roundn(calib_t_vec, 3)}.'
             )
             plt.show()
 
